@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+flask-redis-app_redis-data/
+.DS_Store
+
