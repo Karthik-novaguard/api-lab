@@ -1,29 +1,30 @@
-#!/usr/bin/env bash
-set -e
+#!/bin/bash
 
-echo "[*] Starting IAM-APE Lab Setup for Learners"
+# Bash script to install all necessary tools for the iam-ape lab on Ubuntu.
 
-# Install system packages
-sudo apt update && sudo apt install -y wget curl git unzip build-essential python3 python3-pip jq
+echo "🚀 Starting Tool Installation..."
 
-# Install AWS CLI
-if ! command -v aws &>/dev/null; then
-    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-    unzip awscliv2.zip
-    sudo ./aws/install
-    rm -rf aws awscliv2.zip
-fi
+# --- Step 1: Install System Dependencies ---
+echo "📦 Installing required system packages (Python, AWS CLI, jq)..."
+sudo apt-get update > /dev/null 2>&1
+sudo apt-get install -y software-properties-common > /dev/null 2>&1
+sudo add-apt-repository -y ppa:deadsnakes/ppa > /dev/null 2>&1
+sudo apt-get install -y python3.9 python3-pip awscli jq > /dev/null 2>&1
+echo "✅ System packages installed."
 
-# Install Terraform
-if ! command -v terraform &>/dev/null; then
-    curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
-    sudo apt update
-    sudo apt install -y terraform
-fi
+# --- Step 2: Install Terraform ---
+echo "🔧 Installing Terraform..."
+sudo apt-get install -y gpg
+wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt-get update > /dev/null 2>&1
+sudo apt-get install -y terraform > /dev/null 2>&1
+echo "✅ Terraform installed."
 
-# Install Python dependencies for IAM-APE (if any)
-pip3 install --upgrade pip
-pip3 install -r requirements.txt
+# --- Step 3: Install and Update iam-ape ---
+echo "🔧 Installing iam-ape..."
+pip install iam-ape > /dev/null 2>&1
+echo "✅ iam-ape is installed."
 
-echo "[*] Setup complete. Learners can now run IAM-APE manually."
+echo ""
+echo "🎉 All tools are installed! You can now follow the instructions in the README file to run the lab."

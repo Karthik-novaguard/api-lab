@@ -4,293 +4,119 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.5"
-    }
   }
+  required_version = ">= 1.4.0"
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region  = "us-west-2"
+  profile = "admin-ape"
 }
 
-# --- DATA SOURCES ---
-
-resource "random_id" "bucket_suffix" {
-  byte_length = 4
+# ----------------- IAM Groups -----------------
+resource "aws_iam_group" "overperm_group" {
+  name = "GroupOverPerm"
 }
 
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
-
-data "aws_ami" "amazon_linux_2" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
+resource "aws_iam_group" "leastperm_group" {
+  name = "GroupLeastPerm"
 }
 
-# --- CORE RESOURCES ---
-
-resource "aws_s3_bucket" "project_alpha_data" {
-  bucket = "project-alpha-data-${random_id.bucket_suffix.hex}"
+resource "aws_iam_group" "ineffective_group" {
+  name = "GroupIneffectivePerm"
 }
 
-resource "aws_dynamodb_table" "project_alpha_config" {
-  name           = "project-alpha-config"
-  billing_mode   = "PROVISIONED"
-  read_capacity  = 1
-  write_capacity = 1
-  hash_key       = "ID"
-
-  attribute {
-    name = "ID"
-    type = "S"
-  }
+# ----------------- IAM Policies -----------------
+# Over-permissioned group - Admin access
+resource "aws_iam_group_policy_attachment" "overperm_admin" {
+  group      = aws_iam_group.overperm_group.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
 
-# --- SECRETS MANAGER ---
-
-resource "aws_secretsmanager_secret" "alpha_db_credentials" {
-  name        = "alpha-db-credentials-new"
-  description = "Credentials for Project Alpha DB"
+# Least-privilege group - S3 read-only
+resource "aws_iam_group_policy_attachment" "leastperm_s3" {
+  group      = aws_iam_group.leastperm_group.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
 }
 
-resource "aws_secretsmanager_secret_version" "alpha_db_credentials_version" {
-  secret_id     = aws_secretsmanager_secret.alpha_db_credentials.id
-  secret_string = jsonencode({
-    username = "admin",
-    password = "fakePassword123"
-  })
-}
+# Ineffective permission group - Deny EC2 StartInstances
+resource "aws_iam_group_policy" "ineffective_policy" {
+  name  = "IneffectivePolicy"
+  group = aws_iam_group.ineffective_group.name
 
-# --- EC2 INSTANCE ---
-
-resource "aws_instance" "project_alpha_vm" {
-  ami           = data.aws_ami.amazon_linux_2.id
-  instance_type = "t2.micro"
-
-  tags = {
-    Name    = "ProjectAlphaVM"
-    Project = "Alpha"
-  }
-}
-
-# --- LAMBDA FUNCTION ---
-
-data "archive_file" "lambda_zip" {
-  type                    = "zip"
-  source_content          = "exports.handler = async (event) => { console.log('Hello from dummy Lambda!'); };"
-  source_content_filename = "index.js"
-  output_path             = "function.zip"
-}
-
-resource "aws_iam_role" "lambda_exec_role" {
-  name = "lambda-exec-role-for-alpha"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Action = "sts:AssumeRole",
-      Effect = "Allow",
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
-    }]
-  })
-}
-
-resource "aws_lambda_function" "process_alpha_data" {
-  function_name    = "process-alpha-data"
-  filename         = data.archive_file.lambda_zip.output_path
-  handler          = "index.handler"
-  runtime          = "nodejs18.x"
-  role             = aws_iam_role.lambda_exec_role.arn
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-}
-
-# --- IAM POLICIES ---
-
-resource "aws_iam_policy" "general_admins_policy" {
-  name        = "GeneralAdminsPolicy"
-  description = "Grants sweeping admin access"
   policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect   = "Allow",
-      Action   = ["s3:*", "dynamodb:*", "ec2:*", "lambda:*"],
-      Resource = "*"
-    }]
-  })
-}
-
-resource "aws_iam_policy" "app_operator_policy" {
-  name        = "AppOperatorPolicy"
-  description = "Least privilege policy for app operators"
-  policy = jsonencode({
-    Version = "2012-10-17",
+    Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow",
-        Action   = ["ec2:StartInstances", "ec2:StopInstances"],
-        Resource = "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:instance/*",
-        Condition = {
-          StringEquals = { "aws:ResourceTag/Project" = "Alpha" }
-        }
-      },
-      {
-        Effect   = "Allow",
-        Action   = "lambda:InvokeFunction",
-        Resource = aws_lambda_function.process_alpha_data.arn
-      },
-      {
-        Effect   = "Allow",
-        Action   = "secretsmanager:GetSecretValue",
-        Resource = aws_secretsmanager_secret.alpha_db_credentials.arn
+        Action   = "ec2:StartInstances"
+        Effect   = "Deny"
+        Resource = "*"
       }
     ]
   })
 }
 
-resource "aws_iam_policy" "data_science_policy" {
-  name        = "DataSciencePolicy"
-  description = "Broad permissions for data scientists"
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect   = "Allow",
-      Action   = ["s3:GetObject", "s3:PutObject", "ec2:DescribeInstances", "ec2:RunInstances"],
-      Resource = "*"
-    }]
-  })
+# ----------------- IAM Users -----------------
+locals {
+  over_users  = ["OverUser1", "OverUser2"]
+  least_users = ["LeastUser1", "LeastUser2"]
+  ineff_users = ["IneffUser1", "IneffUser2"]
 }
 
-resource "aws_iam_policy" "ci_cd_services_policy" {
-  name        = "CiCdServicesPolicy"
-  description = "Permissions for automation roles"
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect   = "Allow",
-      Action   = ["s3:PutObject", "lambda:UpdateFunctionCode", "iam:PassRole"],
-      Resource = "*"
-    }]
-  })
+# Create all users
+resource "aws_iam_user" "all_users" {
+  for_each = toset(concat(local.over_users, local.least_users, local.ineff_users))
+  name     = each.value
 }
 
-resource "aws_iam_policy" "alpha_project_boundary" {
-  name        = "AlphaProjectBoundary"
-  description = "Permissions boundary for Project Alpha"
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect   = "Allow",
-      Action   = ["s3:*", "lambda:*"],
-      Resource = "*"
-    }]
-  })
+# ----------------- User Group Memberships -----------------
+# Over-permissioned users
+resource "aws_iam_user_group_membership" "over_users_membership" {
+  for_each = toset(local.over_users)
+  user     = aws_iam_user.all_users[each.value].name
+  groups   = [aws_iam_group.overperm_group.name]
 }
 
-# --- IAM GROUPS AND ATTACHMENTS ---
-
-resource "aws_iam_group" "general_admins_group" { name = "General-Admins-Group" }
-resource "aws_iam_group_policy_attachment" "ga_attach" {
-  group      = aws_iam_group.general_admins_group.name
-  policy_arn = aws_iam_policy.general_admins_policy.arn
+# Least-permission users
+resource "aws_iam_user_group_membership" "least_users_membership" {
+  for_each = toset(local.least_users)
+  user     = aws_iam_user.all_users[each.value].name
+  groups   = [aws_iam_group.leastperm_group.name]
 }
 
-resource "aws_iam_group" "app_operator_group" { name = "App-Operator-Group" }
-resource "aws_iam_group_policy_attachment" "ao_attach" {
-  group      = aws_iam_group.app_operator_group.name
-  policy_arn = aws_iam_policy.app_operator_policy.arn
+# Ineffective permission users
+resource "aws_iam_user_group_membership" "ineff_users_membership" {
+  for_each = toset(local.ineff_users)
+  user     = aws_iam_user.all_users[each.value].name
+  groups   = [aws_iam_group.ineffective_group.name]
 }
 
-resource "aws_iam_group" "data_science_group" { name = "Data-Science-Group" }
-resource "aws_iam_group_policy_attachment" "ds_attach" {
-  group      = aws_iam_group.data_science_group.name
-  policy_arn = aws_iam_policy.data_science_policy.arn
+# ----------------- Access Keys (one per first user in each group) -----------------
+resource "aws_iam_access_key" "over_user1_key" {
+  user = aws_iam_user.all_users["OverUser1"].name
 }
 
-resource "aws_iam_group" "ci_cd_services_group" { name = "CI-CD-Services-Group" }
-resource "aws_iam_group_policy_attachment" "cicd_attach" {
-  group      = aws_iam_group.ci_cd_services_group.name
-  policy_arn = aws_iam_policy.ci_cd_services_policy.arn
+resource "aws_iam_access_key" "least_user1_key" {
+  user = aws_iam_user.all_users["LeastUser1"].name
 }
 
-# --- IAM USERS AND MEMBERSHIPS ---
-
-resource "aws_iam_user" "user_overprivileged" { name = "user-overprivileged" }
-resource "aws_iam_user" "user_least_privilege" { name = "user-least-privilege" }
-resource "aws_iam_user" "user_denied" { name = "user-denied" }
-
-resource "aws_iam_user" "user_ineffective" {
-  name                 = "user-ineffective"
-  permissions_boundary = aws_iam_policy.alpha_project_boundary.arn
+resource "aws_iam_access_key" "ineff_user1_key" {
+  user = aws_iam_user.all_users["IneffUser1"].name
 }
 
-resource "aws_iam_user_group_membership" "memberships" {
-  user   = aws_iam_user.user_overprivileged.name
-  groups = [aws_iam_group.general_admins_group.name]
-}
-resource "aws_iam_user_group_membership" "memberships2" {
-  user   = aws_iam_user.user_least_privilege.name
-  groups = [aws_iam_group.app_operator_group.name]
-}
-resource "aws_iam_user_group_membership" "memberships3" {
-  user   = aws_iam_user.user_denied.name
-  groups = [aws_iam_group.data_science_group.name]
-}
-resource "aws_iam_user_group_membership" "memberships4" {
-  user   = aws_iam_user.user_ineffective.name
-  groups = [aws_iam_group.ci_cd_services_group.name]
+# ----------------- Outputs -----------------
+output "all_users" {
+  value = keys(aws_iam_user.all_users)
 }
 
-# --- SPECIAL USER ATTACHMENTS ---
-
-resource "aws_iam_user_policy" "user_denied_inline_policy" {
-  name   = "DenySpecificActions"
-  user   = aws_iam_user.user_denied.name
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect   = "Deny",
-        Action   = "s3:PutObject",
-        Resource = "${aws_s3_bucket.project_alpha_data.arn}/production/*"
-      },
-      {
-        Effect   = "Deny",
-        Action   = "ec2:RunInstances",
-        Resource = "*",
-        Condition = {
-          StringEquals = { "ec2:InstanceType" = "m5.24xlarge" }
-        }
-      }
-    ]
-  })
+output "over_user1_access_key" {
+  value = aws_iam_access_key.over_user1_key.id
 }
 
-# --- OUTPUTS ---
-
-output "project_alpha_s3_bucket_name" {
-  description = "The unique name of the S3 bucket created for Project Alpha."
-  value       = aws_s3_bucket.project_alpha_data.id
+output "least_user1_access_key" {
+  value = aws_iam_access_key.least_user1_key.id
 }
 
-output "project_alpha_ec2_instance_id" {
-  description = "The ID of the EC2 instance for Project Alpha."
-  value       = aws_instance.project_alpha_vm.id
-}
-
-output "project_alpha_ec2_instance_public_ip" {
-  description = "The public IP address of the EC2 instance for Project Alpha."
-  value       = aws_instance.project_alpha_vm.public_ip
-}
-
-output "lambda_function_arn" {
-  description = "The ARN of the process-alpha-data Lambda function."
-  value       = aws_lambda_function.process_alpha_data.arn
+output "ineff_user1_access_key" {
+  value = aws_iam_access_key.ineff_user1_key.id
 }
