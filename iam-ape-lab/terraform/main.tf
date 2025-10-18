@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
   required_version = ">= 1.4.0"
 }
@@ -70,28 +74,25 @@ resource "aws_iam_user" "all_users" {
 }
 
 # ----------------- User Group Memberships -----------------
-# Over-permissioned users
 resource "aws_iam_user_group_membership" "over_users_membership" {
   for_each = toset(local.over_users)
   user     = aws_iam_user.all_users[each.value].name
   groups   = [aws_iam_group.overperm_group.name]
 }
 
-# Least-permission users
 resource "aws_iam_user_group_membership" "least_users_membership" {
   for_each = toset(local.least_users)
   user     = aws_iam_user.all_users[each.value].name
   groups   = [aws_iam_group.leastperm_group.name]
 }
 
-# Ineffective permission users
 resource "aws_iam_user_group_membership" "ineff_users_membership" {
   for_each = toset(local.ineff_users)
   user     = aws_iam_user.all_users[each.value].name
   groups   = [aws_iam_group.ineffective_group.name]
 }
 
-# ----------------- Access Keys (one per first user in each group) -----------------
+# ----------------- Access Keys -----------------
 resource "aws_iam_access_key" "over_user1_key" {
   user = aws_iam_user.all_users["OverUser1"].name
 }
@@ -102,6 +103,100 @@ resource "aws_iam_access_key" "least_user1_key" {
 
 resource "aws_iam_access_key" "ineff_user1_key" {
   user = aws_iam_user.all_users["IneffUser1"].name
+}
+
+# ----------------- AWS Resources -----------------
+# 1️⃣ S3 Bucket
+resource "aws_s3_bucket" "lab_bucket" {
+  bucket = "iam-ape-lab-bucket-${random_id.suffix.hex}"
+}
+
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
+# 2️⃣ DynamoDB Table
+resource "aws_dynamodb_table" "lab_table" {
+  name         = "IAMAPE-Lab-Table"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "UserID"
+
+  attribute {
+    name = "UserID"
+    type = "S"
+  }
+}
+
+# 3️⃣ EC2 Instance
+# Data source to get the latest Amazon Linux 2 AMI
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+resource "aws_instance" "lab_ec2" {
+  ami           = data.aws_ami.amazon_linux.id
+  instance_type = "t2.micro"
+
+  tags = {
+    Name = "IAMAPE-Lab-EC2"
+  }
+}
+
+# 4️⃣ Lambda Function
+resource "aws_iam_role" "lambda_exec" {
+  name = "IAMAPE-LambdaExecRole"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Service = "lambda.amazonaws.com" }
+        Action    = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_lambda_function" "lab_function" {
+  function_name = "IAMAPE-Lab-Lambda"
+  role          = aws_iam_role.lambda_exec.arn
+  handler       = "index.handler"
+  runtime       = "python3.9"
+  filename      = "lambda_function_payload.zip"
+}
+
+# 5️⃣ Secrets Manager Secret (randomized)
+resource "random_string" "secret_name_suffix" {
+  length  = 6
+  upper   = false
+  special = false
+}
+
+resource "random_string" "secret_value" {
+  length  = 16
+  upper   = true
+  special = true
+}
+
+resource "aws_secretsmanager_secret" "lab_secret" {
+  name = "iamape-secret-${random_string.secret_name_suffix.result}"
+}
+
+resource "aws_secretsmanager_secret_version" "lab_secret_value" {
+  secret_id     = aws_secretsmanager_secret.lab_secret.id
+  secret_string = random_string.secret_value.result
 }
 
 # ----------------- Outputs -----------------
@@ -119,4 +214,14 @@ output "least_user1_access_key" {
 
 output "ineff_user1_access_key" {
   value = aws_iam_access_key.ineff_user1_key.id
+}
+
+output "resources_summary" {
+  value = {
+    s3_bucket = aws_s3_bucket.lab_bucket.bucket
+    dynamodb  = aws_dynamodb_table.lab_table.name
+    ec2       = aws_instance.lab_ec2.id
+    lambda    = aws_lambda_function.lab_function.function_name
+    secret    = aws_secretsmanager_secret.lab_secret.name
+  }
 }
