@@ -37,6 +37,43 @@ resource "aws_iam_group_policy_attachment" "overperm_admin" {
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
 
+# OverUser Custom Restrictions
+resource "aws_iam_group_policy" "overperm_custom" {
+  name  = "OverPermCustomPolicy"
+  group = aws_iam_group.overperm_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # Deny S3 delete actions
+      {
+        Effect   = "Deny"
+        Action   = [
+          "s3:DeleteObject",
+          "s3:DeleteObjectVersion",
+          "s3:DeleteBucket"
+        ]
+        Resource = "*"
+      },
+      # Deny EC2 destructive/write actions
+      {
+        Effect   = "Deny"
+        Action   = [
+          "ec2:RunInstances",
+          "ec2:TerminateInstances",
+          "ec2:StopInstances",
+          "ec2:StartInstances",
+          "ec2:RebootInstances",
+          "ec2:Create*",
+          "ec2:Delete*",
+          "ec2:Modify*"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 # Least-privilege group - S3 read-only
 resource "aws_iam_group_policy_attachment" "leastperm_s3" {
   group      = aws_iam_group.leastperm_group.name
@@ -107,12 +144,12 @@ resource "aws_iam_access_key" "ineff_user1_key" {
 
 # ----------------- AWS Resources -----------------
 # 1️⃣ S3 Bucket
-resource "aws_s3_bucket" "lab_bucket" {
-  bucket = "iam-ape-lab-bucket-${random_id.suffix.hex}"
-}
-
 resource "random_id" "suffix" {
   byte_length = 4
+}
+
+resource "aws_s3_bucket" "lab_bucket" {
+  bucket = "iam-ape-lab-bucket-${random_id.suffix.hex}"
 }
 
 # 2️⃣ DynamoDB Table
@@ -128,7 +165,6 @@ resource "aws_dynamodb_table" "lab_table" {
 }
 
 # 3️⃣ EC2 Instance
-# Data source to get the latest Amazon Linux 2 AMI
 data "aws_ami" "amazon_linux" {
   most_recent = true
   owners      = ["amazon"]

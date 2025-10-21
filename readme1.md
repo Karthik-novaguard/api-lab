@@ -96,7 +96,13 @@ Run the iam-ape command for each user to generate a detailed JSON analysis file.
 First, get your AWS Account ID:
 
 ```bash
-export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --profile admin-ape --query "Account" --output text)
+aws sts get-caller-identity --profile admin-ape --query "Account" --output text
+```
+
+# Export account_id
+```
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --profile admin-ape --query "Account" --output text)   
+echo $AWS_ACCOUNT_ID    
 ```
 
 Now, run the analysis commands:
@@ -134,3 +140,5 @@ When you are finished, run this command to delete all the IAM resources you crea
 ```bash
 terraform destroy --auto-approve
 ```
+
+
