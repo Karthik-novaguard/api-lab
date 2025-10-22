@@ -14,75 +14,69 @@ terraform {
 
 provider "aws" {
   region  = "us-west-2"
-  profile = "admin-ape"
+  profile = "admin-ape" # can be changed per user
+}
+
+# ----------------- Unique Lab Suffix -----------------
+resource "random_string" "lab_suffix" {
+  length  = 6
+  special = false
+  upper   = false
+  lower   = true
 }
 
 # ----------------- IAM Groups -----------------
 resource "aws_iam_group" "overperm_group" {
-  name = "GroupOverPerm"
+  name = "GroupOverPerm-${random_string.lab_suffix.result}"
 }
 
 resource "aws_iam_group" "leastperm_group" {
-  name = "GroupLeastPerm"
+  name = "GroupLeastPerm-${random_string.lab_suffix.result}"
 }
 
 resource "aws_iam_group" "ineffective_group" {
-  name = "GroupIneffectivePerm"
+  name = "GroupIneffectivePerm-${random_string.lab_suffix.result}"
 }
 
 # ----------------- IAM Policies -----------------
-# Over-permissioned group - Admin access
-resource "aws_iam_group_policy_attachment" "overperm_admin" {
-  group      = aws_iam_group.overperm_group.name
-  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
-}
-
-# OverUser Custom Restrictions
 resource "aws_iam_group_policy" "overperm_custom" {
-  name  = "OverPermCustomPolicy"
+  name  = "OverPermCustomPolicy-${random_string.lab_suffix.result}"
   group = aws_iam_group.overperm_group.name
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      # Deny S3 delete actions
       {
-        Effect   = "Deny"
-        Action   = [
-          "s3:DeleteObject",
-          "s3:DeleteObjectVersion",
-          "s3:DeleteBucket"
-        ]
+        Effect = "Allow"
+        Action = ["s3:ListAllMyBuckets","s3:ListBucket","s3:GetBucketLocation","s3:GetObject"]
         Resource = "*"
       },
-      # Deny EC2 destructive/write actions
       {
-        Effect   = "Deny"
-        Action   = [
-          "ec2:RunInstances",
-          "ec2:TerminateInstances",
-          "ec2:StopInstances",
-          "ec2:StartInstances",
-          "ec2:RebootInstances",
-          "ec2:Create*",
-          "ec2:Delete*",
-          "ec2:Modify*"
-        ]
+        Effect = "Allow"
+        Action = ["ec2:Describe*"]
+        Resource = "*"
+      },
+      {
+        Effect = "Deny"
+        Action = ["s3:DeleteObject","s3:DeleteObjectVersion","s3:DeleteBucket"]
+        Resource = ["arn:aws:s3:::*","arn:aws:s3:::*/*"]
+      },
+      {
+        Effect = "Deny"
+        Action = ["ec2:RunInstances","ec2:TerminateInstances","ec2:StopInstances","ec2:StartInstances","ec2:RebootInstances","ec2:Create*","ec2:Delete*","ec2:Modify*"]
         Resource = "*"
       }
     ]
   })
 }
 
-# Least-privilege group - S3 read-only
 resource "aws_iam_group_policy_attachment" "leastperm_s3" {
   group      = aws_iam_group.leastperm_group.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
 }
 
-# Ineffective permission group - Deny EC2 StartInstances
 resource "aws_iam_group_policy" "ineffective_policy" {
-  name  = "IneffectivePolicy"
+  name  = "IneffectivePolicy-${random_string.lab_suffix.result}"
   group = aws_iam_group.ineffective_group.name
 
   policy = jsonencode({
@@ -97,35 +91,48 @@ resource "aws_iam_group_policy" "ineffective_policy" {
   })
 }
 
-# ----------------- IAM Users -----------------
+# ----------------- Users Map -----------------
 locals {
-  over_users  = ["OverUser1", "OverUser2"]
-  least_users = ["LeastUser1", "LeastUser2"]
-  ineff_users = ["IneffUser1", "IneffUser2"]
+  all_users_map = {
+    OverUser1  = "over"
+    OverUser2  = "over"
+    LeastUser1 = "least"
+    LeastUser2 = "least"
+    IneffUser1 = "ineff"
+    IneffUser2 = "ineff"
+  }
 }
 
-# Create all users
+# ----------------- Random suffix per user -----------------
+resource "random_string" "user_suffix" {
+  for_each = local.all_users_map
+  length   = 6
+  upper    = true
+  special  = false
+}
+
+# ----------------- IAM Users -----------------
 resource "aws_iam_user" "all_users" {
-  for_each = toset(concat(local.over_users, local.least_users, local.ineff_users))
-  name     = each.value
+  for_each = local.all_users_map
+  name     = "${each.key}-${random_string.user_suffix[each.key].result}"
 }
 
 # ----------------- User Group Memberships -----------------
 resource "aws_iam_user_group_membership" "over_users_membership" {
-  for_each = toset(local.over_users)
-  user     = aws_iam_user.all_users[each.value].name
+  for_each = { for k,v in local.all_users_map : k => aws_iam_user.all_users[k].name if v == "over" }
+  user     = each.value
   groups   = [aws_iam_group.overperm_group.name]
 }
 
 resource "aws_iam_user_group_membership" "least_users_membership" {
-  for_each = toset(local.least_users)
-  user     = aws_iam_user.all_users[each.value].name
+  for_each = { for k,v in local.all_users_map : k => aws_iam_user.all_users[k].name if v == "least" }
+  user     = each.value
   groups   = [aws_iam_group.leastperm_group.name]
 }
 
 resource "aws_iam_user_group_membership" "ineff_users_membership" {
-  for_each = toset(local.ineff_users)
-  user     = aws_iam_user.all_users[each.value].name
+  for_each = { for k,v in local.all_users_map : k => aws_iam_user.all_users[k].name if v == "ineff" }
+  user     = each.value
   groups   = [aws_iam_group.ineffective_group.name]
 }
 
@@ -143,18 +150,16 @@ resource "aws_iam_access_key" "ineff_user1_key" {
 }
 
 # ----------------- AWS Resources -----------------
-# 1️⃣ S3 Bucket
-resource "random_id" "suffix" {
+resource "random_id" "bucket_suffix" {
   byte_length = 4
 }
 
 resource "aws_s3_bucket" "lab_bucket" {
-  bucket = "iam-ape-lab-bucket-${random_id.suffix.hex}"
+  bucket = "iam-ape-lab-bucket-${random_id.bucket_suffix.hex}"
 }
 
-# 2️⃣ DynamoDB Table
 resource "aws_dynamodb_table" "lab_table" {
-  name         = "IAMAPE-Lab-Table"
+  name         = "IAMAPE-Lab-Table-${random_string.lab_suffix.result}"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "UserID"
 
@@ -164,7 +169,6 @@ resource "aws_dynamodb_table" "lab_table" {
   }
 }
 
-# 3️⃣ EC2 Instance
 data "aws_ami" "amazon_linux" {
   most_recent = true
   owners      = ["amazon"]
@@ -185,13 +189,12 @@ resource "aws_instance" "lab_ec2" {
   instance_type = "t2.micro"
 
   tags = {
-    Name = "IAMAPE-Lab-EC2"
+    Name = "IAMAPE-Lab-EC2-${random_string.lab_suffix.result}"
   }
 }
 
-# 4️⃣ Lambda Function
 resource "aws_iam_role" "lambda_exec" {
-  name = "IAMAPE-LambdaExecRole"
+  name = "IAMAPE-LambdaExecRole-${random_string.lab_suffix.result}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -206,18 +209,11 @@ resource "aws_iam_role" "lambda_exec" {
 }
 
 resource "aws_lambda_function" "lab_function" {
-  function_name = "IAMAPE-Lab-Lambda"
+  function_name = "IAMAPE-Lab-Lambda-${random_string.lab_suffix.result}"
   role          = aws_iam_role.lambda_exec.arn
   handler       = "index.handler"
   runtime       = "python3.9"
   filename      = "lambda_function_payload.zip"
-}
-
-# 5️⃣ Secrets Manager Secret (randomized)
-resource "random_string" "secret_name_suffix" {
-  length  = 6
-  upper   = false
-  special = false
 }
 
 resource "random_string" "secret_value" {
@@ -227,7 +223,7 @@ resource "random_string" "secret_value" {
 }
 
 resource "aws_secretsmanager_secret" "lab_secret" {
-  name = "iamape-secret-${random_string.secret_name_suffix.result}"
+  name = "iamape-secret-${random_string.lab_suffix.result}"
 }
 
 resource "aws_secretsmanager_secret_version" "lab_secret_value" {
@@ -240,16 +236,28 @@ output "all_users" {
   value = keys(aws_iam_user.all_users)
 }
 
-output "over_user1_access_key" {
-  value = aws_iam_access_key.over_user1_key.id
+output "over_user1_access_keys" {
+  value = {
+    access_key_id     = aws_iam_access_key.over_user1_key.id
+    secret_access_key = aws_iam_access_key.over_user1_key.secret
+  }
+  sensitive = true
 }
 
-output "least_user1_access_key" {
-  value = aws_iam_access_key.least_user1_key.id
+output "least_user1_access_keys" {
+  value = {
+    access_key_id     = aws_iam_access_key.least_user1_key.id
+    secret_access_key = aws_iam_access_key.least_user1_key.secret
+  }
+  sensitive = true
 }
 
-output "ineff_user1_access_key" {
-  value = aws_iam_access_key.ineff_user1_key.id
+output "ineff_user1_access_keys" {
+  value = {
+    access_key_id     = aws_iam_access_key.ineff_user1_key.id
+    secret_access_key = aws_iam_access_key.ineff_user1_key.secret
+  }
+  sensitive = true
 }
 
 output "resources_summary" {
