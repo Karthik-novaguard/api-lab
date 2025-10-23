@@ -1,28 +1,21 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.6"
-    }
-  }
-  required_version = ">= 1.4.0"
-}
-
-provider "aws" {
-  region  = "us-west-2"
-  profile = "admin-ape" # can be changed per user
-}
-
 # ----------------- Unique Lab Suffix -----------------
 resource "random_string" "lab_suffix" {
   length  = 6
   special = false
   upper   = false
   lower   = true
+}
+
+# ----------------- Users Map -----------------
+locals {
+  all_users_map = {
+    OverUser1  = "over"
+    OverUser2  = "over"
+    LeastUser1 = "least"
+    LeastUser2 = "least"
+    IneffUser1 = "ineff"
+    IneffUser2 = "ineff"
+  }
 }
 
 # ----------------- IAM Groups -----------------
@@ -39,42 +32,98 @@ resource "aws_iam_group" "ineffective_group" {
 }
 
 # ----------------- IAM Policies -----------------
+# 1. Overly Permissive Policy
 resource "aws_iam_group_policy" "overperm_custom" {
   name  = "OverPermCustomPolicy-${random_string.lab_suffix.result}"
   group = aws_iam_group.overperm_group.name
 
+  # --- THIS IS THE FIX ---
+  # Wait for these resources to be created before building the policy
+  depends_on = [
+    aws_dynamodb_table.lab_table,
+    aws_secretsmanager_secret.lab_secret
+  ]
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      // 1. S3 Allow (Overly permissive)
       {
-        Effect = "Allow"
-        Action = ["s3:ListAllMyBuckets","s3:ListBucket","s3:GetBucketLocation","s3:GetObject"]
+        Effect   = "Allow"
+        Action   = ["s3:ListAllMyBuckets", "s3:ListBucket", "s3:GetBucketLocation", "s3:GetObject"]
         Resource = "*"
       },
+      // 2. EC2 Allow (Overly permissive)
       {
-        Effect = "Allow"
-        Action = ["ec2:Describe*"]
+        Effect   = "Allow"
+        Action   = ["ec2:Describe*"]
         Resource = "*"
       },
+      // 3. S3 Deny
       {
         Effect = "Deny"
-        Action = ["s3:DeleteObject","s3:DeleteObjectVersion","s3:DeleteBucket"]
-        Resource = ["arn:aws:s3:::*","arn:aws:s3:::*/*"]
+        Action = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:DeleteBucket"]
+        Resource = ["arn:aws:s3:::*", "arn:aws:s3:::*/*"]
       },
+      // 4. EC2 Deny
       {
         Effect = "Deny"
-        Action = ["ec2:RunInstances","ec2:TerminateInstances","ec2:StopInstances","ec2:StartInstances","ec2:RebootInstances","ec2:Create*","ec2:Delete*","ec2:Modify*"]
+        Action = ["ec2:RunInstances", "ec2:TerminateInstances", "ec2:StopInstances", "ec2:StartInstances", "ec2:RebootInstances", "ec2:Create*", "ec2:Delete*", "ec2:Modify*"]
         Resource = "*"
+      },
+      // 5. VALID NotAction Example (Overly permissive)
+      {
+        Effect    = "Allow"
+        NotAction = "dynamodb:DeleteTable"
+        Resource  = aws_dynamodb_table.lab_table.arn
+      },
+      // 6. VALID NotResource Example (Overly permissive)
+      {
+        Effect      = "Allow"
+        Action      = "secretsmanager:GetSecretValue"
+        NotResource = [aws_secretsmanager_secret.lab_secret.arn]
       }
     ]
   })
 }
 
-resource "aws_iam_group_policy_attachment" "leastperm_s3" {
-  group      = aws_iam_group.leastperm_group.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+# 2. Least Privilege Policy
+resource "aws_iam_group_policy" "leastperm_custom" {
+  name  = "LeastPermCustomPolicy-${random_string.lab_suffix.result}"
+  group = aws_iam_group.leastperm_group.name
+
+  # --- THIS IS THE FIX ---
+  # Wait for the S3 bucket to be created first
+  depends_on = [
+    aws_s3_bucket.lab_bucket
+  ]
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      // Allows listing the bucket contents
+      {
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.lab_bucket.arn
+      },
+      // Allows all "Get" actions
+      {
+        Effect   = "Allow"
+        Action   = "s3:Get*"
+        Resource = "${aws_s3_bucket.lab_bucket.arn}/*"
+      },
+      // DENIES getting the ACL (the exception)
+      {
+        Effect   = "Deny"
+        Action   = "s3:GetObjectAcl"
+        Resource = "${aws_s3_bucket.lab_bucket.arn}/*"
+      }
+    ]
+  })
 }
 
+# 3. Ineffective Policy
 resource "aws_iam_group_policy" "ineffective_policy" {
   name  = "IneffectivePolicy-${random_string.lab_suffix.result}"
   group = aws_iam_group.ineffective_group.name
@@ -89,18 +138,6 @@ resource "aws_iam_group_policy" "ineffective_policy" {
       }
     ]
   })
-}
-
-# ----------------- Users Map -----------------
-locals {
-  all_users_map = {
-    OverUser1  = "over"
-    OverUser2  = "over"
-    LeastUser1 = "least"
-    LeastUser2 = "least"
-    IneffUser1 = "ineff"
-    IneffUser2 = "ineff"
-  }
 }
 
 # ----------------- Random suffix per user -----------------
@@ -119,19 +156,19 @@ resource "aws_iam_user" "all_users" {
 
 # ----------------- User Group Memberships -----------------
 resource "aws_iam_user_group_membership" "over_users_membership" {
-  for_each = { for k,v in local.all_users_map : k => aws_iam_user.all_users[k].name if v == "over" }
+  for_each = { for k, v in local.all_users_map : k => aws_iam_user.all_users[k].name if v == "over" }
   user     = each.value
   groups   = [aws_iam_group.overperm_group.name]
 }
 
 resource "aws_iam_user_group_membership" "least_users_membership" {
-  for_each = { for k,v in local.all_users_map : k => aws_iam_user.all_users[k].name if v == "least" }
+  for_each = { for k, v in local.all_users_map : k => aws_iam_user.all_users[k].name if v == "least" }
   user     = each.value
   groups   = [aws_iam_group.leastperm_group.name]
 }
 
 resource "aws_iam_user_group_membership" "ineff_users_membership" {
-  for_each = { for k,v in local.all_users_map : k => aws_iam_user.all_users[k].name if v == "ineff" }
+  for_each = { for k, v in local.all_users_map : k => aws_iam_user.all_users[k].name if v == "ineff" }
   user     = each.value
   groups   = [aws_iam_group.ineffective_group.name]
 }
@@ -213,7 +250,7 @@ resource "aws_lambda_function" "lab_function" {
   role          = aws_iam_role.lambda_exec.arn
   handler       = "index.handler"
   runtime       = "python3.9"
-  filename      = "lambda_function_payload.zip"
+  filename      = "lambda_function_payload.zip" # Make sure this file exists
 }
 
 resource "random_string" "secret_value" {
@@ -229,43 +266,4 @@ resource "aws_secretsmanager_secret" "lab_secret" {
 resource "aws_secretsmanager_secret_version" "lab_secret_value" {
   secret_id     = aws_secretsmanager_secret.lab_secret.id
   secret_string = random_string.secret_value.result
-}
-
-# ----------------- Outputs -----------------
-output "all_users" {
-  value = keys(aws_iam_user.all_users)
-}
-
-output "over_user1_access_keys" {
-  value = {
-    access_key_id     = aws_iam_access_key.over_user1_key.id
-    secret_access_key = aws_iam_access_key.over_user1_key.secret
-  }
-  sensitive = true
-}
-
-output "least_user1_access_keys" {
-  value = {
-    access_key_id     = aws_iam_access_key.least_user1_key.id
-    secret_access_key = aws_iam_access_key.least_user1_key.secret
-  }
-  sensitive = true
-}
-
-output "ineff_user1_access_keys" {
-  value = {
-    access_key_id     = aws_iam_access_key.ineff_user1_key.id
-    secret_access_key = aws_iam_access_key.ineff_user1_key.secret
-  }
-  sensitive = true
-}
-
-output "resources_summary" {
-  value = {
-    s3_bucket = aws_s3_bucket.lab_bucket.bucket
-    dynamodb  = aws_dynamodb_table.lab_table.name
-    ec2       = aws_instance.lab_ec2.id
-    lambda    = aws_lambda_function.lab_function.function_name
-    secret    = aws_secretsmanager_secret.lab_secret.name
-  }
 }
