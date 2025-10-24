@@ -9,12 +9,9 @@ resource "random_string" "lab_suffix" {
 # ----------------- Users Map -----------------
 locals {
   all_users_map = {
-    OverUser1  = "over"
-    OverUser2  = "over"
-    LeastUser1 = "least"
-    LeastUser2 = "least"
-    IneffUser1 = "ineff"
-    IneffUser2 = "ineff"
+    alice = "over"  # <-- CHANGED
+    bob   = "least" # <-- CHANGED
+    john  = "ineff" # <-- CHANGED
   }
 }
 
@@ -50,13 +47,13 @@ resource "aws_iam_group_policy" "overperm_custom" {
       // 1. S3 Allow (Overly permissive)
       {
         Effect   = "Allow"
-        Action   = ["s3:ListAllMyBuckets", "s3:ListBucket", "s3:GetBucketLocation", "s3:GetObject"]
+        Action   = "s3:*"
         Resource = "*"
       },
       // 2. EC2 Allow (Overly permissive)
       {
         Effect   = "Allow"
-        Action   = ["ec2:Describe*"]
+        Action   = "ec2:*"
         Resource = "*"
       },
       // 3. S3 Deny
@@ -174,16 +171,16 @@ resource "aws_iam_user_group_membership" "ineff_users_membership" {
 }
 
 # ----------------- Access Keys -----------------
-resource "aws_iam_access_key" "over_user1_key" {
-  user = aws_iam_user.all_users["OverUser1"].name
+resource "aws_iam_access_key" "alice_key" { # <-- CHANGED
+  user = aws_iam_user.all_users["alice"].name # <-- CHANGED
 }
 
-resource "aws_iam_access_key" "least_user1_key" {
-  user = aws_iam_user.all_users["LeastUser1"].name
+resource "aws_iam_access_key" "bob_key" { # <-- CHANGED
+  user = aws_iam_user.all_users["bob"].name # <-- CHANGED
 }
 
-resource "aws_iam_access_key" "ineff_user1_key" {
-  user = aws_iam_user.all_users["IneffUser1"].name
+resource "aws_iam_access_key" "john_key" { # <-- CHANGED
+  user = aws_iam_user.all_users["john"].name # <-- CHANGED
 }
 
 # ----------------- AWS Resources -----------------

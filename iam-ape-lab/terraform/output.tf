@@ -2,26 +2,26 @@ output "all_users" {
   value = keys(aws_iam_user.all_users)
 }
 
-output "over_user1_access_keys" {
+output "alice_access_keys" { # <-- CHANGED
   value = {
-    access_key_id     = aws_iam_access_key.over_user1_key.id
-    secret_access_key = aws_iam_access_key.over_user1_key.secret
+    access_key_id     = aws_iam_access_key.alice_key.id # <-- CHANGED
+    secret_access_key = aws_iam_access_key.alice_key.secret # <-- CHANGED
   }
   sensitive = true
 }
 
-output "least_user1_access_keys" {
+output "bob_access_keys" { # <-- CHANGED
   value = {
-    access_key_id     = aws_iam_access_key.least_user1_key.id
-    secret_access_key = aws_iam_access_key.least_user1_key.secret
+    access_key_id     = aws_iam_access_key.bob_key.id # <-- CHANGED
+    secret_access_key = aws_iam_access_key.bob_key.secret # <-- CHANGED
   }
   sensitive = true
 }
 
-output "ineff_user1_access_keys" {
+output "john_access_keys" { # <-- CHANGED
   value = {
-    access_key_id     = aws_iam_access_key.ineff_user1_key.id
-    secret_access_key = aws_iam_access_key.ineff_user1_key.secret
+    access_key_id     = aws_iam_access_key.john_key.id # <-- CHANGED
+    secret_access_key = aws_iam_access_key.john_key.secret # <-- CHANGED
   }
   sensitive = true
 }

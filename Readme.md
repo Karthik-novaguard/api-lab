@@ -122,7 +122,7 @@ aws iam list-users > iam_users.json
 **Step 5: Get the Keys for a User**
 
 ```bash
-terraform output -json over_user1_access_keys
+terraform output -json alice_access_keys
 ```
 
 You will get an output like this. Copy the values.
@@ -138,7 +138,7 @@ You will get an output like this. Copy the values.
 Now, set the environment variables in your terminal.
 
 ```bash
-aws configure --profile <username>
+aws configure --profile alice
 ```
 
 Then provide:  
@@ -147,21 +147,6 @@ AWS Secret Access Key:
 Default region (e.g., us-west-2):    
 Default output format (e.g., json):  
 
-# For Macos
-
-```bash
-export AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"
-export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-export AWS_DEFAULT_REGION="us-west-2"
-```
-
-# for windows
-
-```bash
-$env:AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"
-$env:AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-```
-
 **Step 7: 🔬 Test the Permissions!**  
 Now, your terminal is acting as OverUser1. You can test the policies you wrote.
 
@@ -169,10 +154,11 @@ Now, your terminal is acting as OverUser1. You can test the policies you wrote.
 This user has read access to S3/EC2 but is denied destructive actions. 
 
 ```bash
-aws s3 ls --profile <username>
-aws ec2 describe-instances --profile <profile-name>
+aws s3 ls --profile alice
+aws ec2 describe-instances --profile alice
 ```
 
+copy the bucket name u will need it in test cases  
 press q for quit from the inside terminal
 
 ```bash
@@ -182,8 +168,8 @@ q
 **This should FAIL (Deny):**  
 
 ```bash
-aws ec2 terminate-instances --instance-ids $(terraform output -json resources_summary | jq -r .ec2)
-aws s3 rm s3://$(terraform output -json resources_summary | jq -r .s3_bucket)/test.txt
+aws ec2 terminate-instances --instance-ids $(terraform output -json resources_summary | jq -r .ec2) --profile <username>
+aws s3 rm s3://$(terraform output -json resources_summary | jq -r .s3_bucket)/test.txt --profile <username>
 ```
 
 These commands attempt to terminate the lab EC2 instance and delete a test file from the S3 bucket using Terraform outputs. They are used to test IAM permissions in practice—users with restrictive policies will see “Access Denied,” while users with appropriate permissions will succeed.
@@ -200,7 +186,7 @@ This user only has S3 Read-Only access.
 First, "log in" as this user (repeat Steps 5 and 6 with least_user1_access_keys).  
 
 ```bash
-terraform output -json least_user1_access_keys
+terraform output -json bob_access_keys
 ```
 
 You will get an output like this. Copy the values.
@@ -216,7 +202,7 @@ You will get an output like this. Copy the values.
 Now, set the environment variables in your terminal.
 
 ```bash
-aws configure --profile <username>
+aws configure --profile bob
 ```
 
 Then provide:  
@@ -224,14 +210,6 @@ AWS Access Key ID:
 AWS Secret Access Key:  
 Default region (e.g., us-west-2):    
 Default output format (e.g., json): 
-
-# For Macos
-
-```bash
-export AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"
-export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-export AWS_DEFAULT_REGION="us-west-2"
-```
 
 Now, run the analysis commands:  
 This should WORK (Allow):  
@@ -244,7 +222,7 @@ terraform output -json resources_summary | jq -r .s3_bucket
 List objects in the bucket  
 
 ```bash
-aws s3 ls s3://<bucket-name> --profile <username>
+aws s3 ls s3://<bucket-name> --profile bob
 ```
 
 It will print an empty line because there are no objects in bucket  
@@ -253,15 +231,15 @@ It will print an empty line because there are no objects in bucket
 List buckets  
 
 ```bash
-aws s3 ls 
+aws s3 ls --profile bob
 ```
 
 When a least-privilege user (LeastUser1-sxnkHu) runs aws s3 ls without specifying a bucket, AWS returns an AccessDenied error because the user’s IAM policy does not allow s3:ListAllMyBuckets.
 This shows that least-privilege users cannot see all buckets and can only access buckets explicitly permitted by their policies.
 
 ```bash
-aws ec2 describe-instances
-aws dynamodb list-tables
+aws ec2 describe-instances --profile bob
+aws dynamodb list-tables --profile bob
 ```
 
 When LeastUser1 runs aws ec2 describe-instances or aws dynamodb list-tables, AWS returns an UnauthorizedOperation or AccessDenied error because the user’s IAM policy does not allow these actions.This demonstrates that least-privilege users can only perform actions explicitly granted in their IAM policies, preventing access to other AWS resources.
@@ -272,7 +250,7 @@ These commands demonstrate **read-only access**: users with only Describe/List p
 This user is in a group with two policies:
 
 ```bash
-terraform output -json ineff_user1_access_keys
+terraform output -json john_access_keys
 ```
 
 You will get an output like this. Copy the values.
@@ -288,7 +266,7 @@ You will get an output like this. Copy the values.
 Now, set the environment variables in your terminal.
 
 ```bash
-aws configure --profile <username>
+aws configure --profile john
 ```
 
 Then provide:  
@@ -297,23 +275,16 @@ AWS Secret Access Key:
 Default region (e.g., us-west-2):    
 Default output format (e.g., json):  
 
-# For Macos
-
-```bash
-export AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"
-export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-export AWS_DEFAULT_REGION="us-west-2"
-```
-
 An Allow for ec2:StartInstances,  
 A Deny for ec2:StartInstances.  
 This is the main test. The user has both Allow and Deny. The Deny will win.
 **All commands are expected to FAIL.**  
 
 ```bash
-aws --profile <username> s3 ls
-aws --profile <username> ec2 describe-instances
-aws --profile <username> ec2 terminate-instances --instance-ids $(terraform output -json resources_summary | jq -r .ec2)```
+aws --profile john s3 ls
+aws --profile john ec2 describe-instances
+aws --profile john ec2 terminate-instances --instance-ids $(terraform output -json resources_summary | jq -r .ec2)
+```
 
 Expected Result: ❗️ FAIL You will get an AccessDenied error. This proves that the explicit Deny policy overrode the Allow policy, making the Allow ineffective.  
 
@@ -321,22 +292,19 @@ Expected Result: ❗️ FAIL You will get an AccessDenied error. This proves tha
 **Over-Privileged Users**  
 
 ```bash
-iam-ape --profile <username> --arn "arn:aws:iam::${AWS_ACCOUNT_ID}:user/<user-name>" -o overuser1_analysis.json -f verbose
-iam-ape --profile admin-ape --arn "arn:aws:iam::${AWS_ACCOUNT_ID}:user/<user-name>" -o overuser2_analysis.json -f verbose
+iam-ape --profile <username> --arn "arn:aws:iam::${AWS_ACCOUNT_ID}:user/<user-name>" -o alice_analysis.json -f verbose
 ```
 
 **Least-Privilege Users** 
 
 ```bash
-iam-ape --profile admin-ape --arn "arn:aws:iam::${AWS_ACCOUNT_ID}:user/<user-name>" -o leastuser1_analysis.json -f verbose
-iam-ape --profile admin-ape --arn "arn:aws:iam::${AWS_ACCOUNT_ID}:user/<user-name>" -o leastuser2_analysis.json -f verbose
+iam-ape --profile admin-ape --arn "arn:aws:iam::${AWS_ACCOUNT_ID}:user/<user-name>" -o bob_analysis.json -f verbose
 ```
 
 **Denied/Ineffective Users**
 
 ```bash
-iam-ape --profile admin-ape --arn "arn:aws:iam::${AWS_ACCOUNT_ID}:user/<user-name>" -o ineffuser1_analysis.json -f verbose
-iam-ape --profile admin-ape --arn "arn:aws:iam::${AWS_ACCOUNT_ID}:user/<user-name>" -o ineffuser2_analysis.json -f verbose
+iam-ape --profile admin-ape --arn "arn:aws:iam::${AWS_ACCOUNT_ID}:user/<user-name>" -o john_analysis.json -f verbose
 ```
 
 **Step 8: Review the Results**  
@@ -344,7 +312,7 @@ List the generated JSON files and view their contents to see the analysis. or u 
 
 ```bash
 ls *_analysis.json
-cat leastuser1_analysis.json
+cat <username>_analysis.json
 ```
 
 **step 9: Cleanup**  
